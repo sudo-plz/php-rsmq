@@ -5,20 +5,10 @@ use Islambey\RSMQ\Util;
 
 class UtilTest extends TestCase
 {
-    /**
-     * @var Util
-     */
-    private $util;
-
-    public function setUp():void
-    {
-        $this->util = new Util();
-    }
-
     public function testMakeID(): void
     {
         $size = 20;
-        $this->assertSame($size, strlen($this->util->makeID($size)));
+        $this->assertSame($size, strlen(Util::makeID($size)));
     }
 
     /**
@@ -29,7 +19,7 @@ class UtilTest extends TestCase
      */
     public function testFormatZeroPad($expected, $num, $count): void
     {
-        $this->assertSame($expected, $this->util->formatZeroPad($num, $count));
+        $this->assertSame($expected, Util::formatZeroPad($num, $count));
     }
 
     /**
