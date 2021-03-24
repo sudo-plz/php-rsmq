@@ -1,9 +1,13 @@
 <?php
 
+use Islambey\RSMQ\Exception\QueueAlreadyExistsException;
+use Islambey\RSMQ\Exception\QueueNotFoundException;
 use Islambey\RSMQ\RSMQ;
 
-class RSMQTest extends \PHPUnit\Framework\TestCase
+class RSMQTest extends PHPUnit\Framework\TestCase
 {
+    private const QUEUE_NAME = 'foo';
+
     /**
      * @var RSMQ
      */
@@ -11,13 +15,13 @@ class RSMQTest extends \PHPUnit\Framework\TestCase
 
     public function setUp(): void
     {
-        $redis = new Redis();
-        $redis->connect('127.0.0.1', 6379);
-        $this->rsmq = new RSMQ($redis);
-
-//        $nodes = ['127.0.0.1:7001', '127.0.0.1:7002', '127.0.0.1:7003'];
-//        $redis = new RedisCluster(null, $nodes);
+//        $redis = new Redis();
+//        $redis->connect('127.0.0.1', 6379);
 //        $this->rsmq = new RSMQ($redis);
+
+        $nodes = ['127.0.0.1:7001', '127.0.0.1:7002', '127.0.0.1:7003'];
+        $redis = new RedisCluster(null, $nodes);
+        $this->rsmq = new RSMQ($redis);
     }
 
     public function testScriptsShouldInitialized(): void
@@ -37,7 +41,7 @@ class RSMQTest extends \PHPUnit\Framework\TestCase
 
     public function testCreateQueue(): void
     {
-        $this->assertTrue($this->rsmq->createQueue('foo'));
+        $this->assertTrue($this->rsmq->createQueue(self::QUEUE_NAME));
     }
 
     public function testCreateQueueWithInvalidName(): void
@@ -51,42 +55,42 @@ class RSMQTest extends \PHPUnit\Framework\TestCase
     {
         $this->expectException(\Islambey\RSMQ\Exception::class);
         $this->expectExceptionMessage('Visibility time must be between');
-        $this->rsmq->createQueue('foo', PHP_INT_MAX);
+        $this->rsmq->createQueue(self::QUEUE_NAME, PHP_INT_MAX);
     }
 
     public function testCreateQueueWithNegativeVt(): void
     {
         $this->expectException(\Islambey\RSMQ\Exception::class);
         $this->expectExceptionMessage('Visibility time must be between');
-        $this->rsmq->createQueue('foo', -1);
+        $this->rsmq->createQueue(self::QUEUE_NAME, -1);
     }
 
     public function testCreateQueueWithBigDelay(): void
     {
         $this->expectException(\Islambey\RSMQ\Exception::class);
         $this->expectExceptionMessage('Delay must be between');
-        $this->rsmq->createQueue('foo', 30, PHP_INT_MAX);
+        $this->rsmq->createQueue(self::QUEUE_NAME, 30, PHP_INT_MAX);
     }
 
     public function testCreateQueueWithNegativeDelay(): void
     {
         $this->expectException(\Islambey\RSMQ\Exception::class);
         $this->expectExceptionMessage('Delay must be between');
-        $this->rsmq->createQueue('foo', 30, -1);
+        $this->rsmq->createQueue(self::QUEUE_NAME, 30, -1);
     }
 
     public function testCreateQueueWithBigMaxSize(): void
     {
         $this->expectException(\Islambey\RSMQ\Exception::class);
         $this->expectExceptionMessage('Maximum message size must be between');
-        $this->rsmq->createQueue('foo', 30, 0, PHP_INT_MAX);
+        $this->rsmq->createQueue(self::QUEUE_NAME, 30, 0, PHP_INT_MAX);
     }
 
     public function testCreateQueueWithSmallMaxSize(): void
     {
         $this->expectException(\Islambey\RSMQ\Exception::class);
         $this->expectExceptionMessage('Maximum message size must be between');
-        $this->rsmq->createQueue('foo', 30, 0, 1023);
+        $this->rsmq->createQueue(self::QUEUE_NAME, 30, 0, 1023);
     }
 
     public function testGetQueueAttributes(): void
@@ -94,9 +98,9 @@ class RSMQTest extends \PHPUnit\Framework\TestCase
         $vt = 40;
         $delay = 60;
         $maxSize = 1024;
-        $this->rsmq->createQueue('foo', $vt, $delay, $maxSize);
+        $this->rsmq->createQueue(self::QUEUE_NAME, $vt, $delay, $maxSize);
 
-        $attributes = $this->rsmq->getQueueAttributes('foo');
+        $attributes = $this->rsmq->getQueueAttributes(self::QUEUE_NAME);
 
         $this->assertSame($vt, $attributes['vt']);
         $this->assertSame($delay, $attributes['delay']);
@@ -105,25 +109,25 @@ class RSMQTest extends \PHPUnit\Framework\TestCase
 
     public function testGetQueueAttributesThatDoesNotExists(): void
     {
+        $this->expectException(QueueNotFoundException::class);
         $this->expectExceptionMessage('Queue not found.');
         $this->rsmq->getQueueAttributes('not_existent_queue');
     }
 
     public function testCreateQueueMustThrowExceptionWhenQueueExists(): void
     {
-        $this->expectException(Exception::class);
-        $this->expectExceptionMessage('Queue already exists.');
+        $this->expectException(QueueAlreadyExistsException::class);
 
-        $this->rsmq->createQueue('foo');
-        $this->rsmq->createQueue('foo');
+        $this->rsmq->createQueue(self::QUEUE_NAME);
+        $this->rsmq->createQueue(self::QUEUE_NAME);
     }
 
     public function testListQueues(): void
     {
-        $this->assertEmpty($this->rsmq->listQueues());
+        $this->assertNotContains(self::QUEUE_NAME, $this->rsmq->listQueues());
 
-        $this->rsmq->createQueue('foo');
-        $this->assertSame(['foo'], $this->rsmq->listQueues());
+        $this->rsmq->createQueue(self::QUEUE_NAME);
+        $this->assertContains(self::QUEUE_NAME, $this->rsmq->listQueues());
     }
 
     public function testValidateWithInvalidQueueName(): void
@@ -169,30 +173,30 @@ class RSMQTest extends \PHPUnit\Framework\TestCase
 
     public function testSendMessage(): void
     {
-        $this->rsmq->createQueue('foo');
-        $id = $this->rsmq->sendMessage('foo', 'foobar');
+        $this->rsmq->createQueue(self::QUEUE_NAME);
+        $id = $this->rsmq->sendMessage(self::QUEUE_NAME, 'foobar');
         $this->assertSame(32, strlen($id));
     }
 
     public function testSendMessageWithBigMessage(): void
     {
-        $this->rsmq->createQueue('foo');
+        $this->rsmq->createQueue(self::QUEUE_NAME);
         $bigStr = str_repeat(bin2hex(random_bytes(512)), 100);
 
         $this->expectExceptionMessage('Message too long');
-        $this->rsmq->sendMessage('foo', $bigStr);
+        $this->rsmq->sendMessage(self::QUEUE_NAME, $bigStr);
     }
 
     public function testDeleteMessage(): void
     {
-        $this->rsmq->createQueue('foo');
-        $id = $this->rsmq->sendMessage('foo', 'bar');
-        $this->assertTrue($this->rsmq->deleteMessage('foo', $id));
+        $this->rsmq->createQueue(self::QUEUE_NAME);
+        $id = $this->rsmq->sendMessage(self::QUEUE_NAME, 'bar');
+        $this->assertTrue($this->rsmq->deleteMessage(self::QUEUE_NAME, $id));
     }
 
     public function testReceiveMessage(): void
     {
-        $queue = 'foo';
+        $queue = self::QUEUE_NAME;
         $message = 'Hello World';
         $this->rsmq->createQueue($queue);
         $id = $this->rsmq->sendMessage($queue, $message);
@@ -204,7 +208,7 @@ class RSMQTest extends \PHPUnit\Framework\TestCase
 
     public function testReceiveMessageWhenNoMessageExists(): void
     {
-        $queue = 'foo';
+        $queue = self::QUEUE_NAME;
         $this->rsmq->createQueue($queue);
         $received = $this->rsmq->receiveMessage($queue);
 
@@ -213,16 +217,16 @@ class RSMQTest extends \PHPUnit\Framework\TestCase
 
     public function testChangeMessageVisibility(): void
     {
-        $queue = 'foo';
+        $queue = self::QUEUE_NAME;
         $this->rsmq->createQueue($queue);
         $id = $this->rsmq->sendMessage($queue, 'bar');
         $this->assertTrue($this->rsmq->changeMessageVisibility($queue, $id, 60));
-
+        $this->assertEmpty($this->rsmq->receiveMessage($queue));
     }
 
     public function testGetQueue(): void
     {
-        $queueName = 'foo';
+        $queueName = self::QUEUE_NAME;
         $vt = 30;
         $delay = 0;
         $maxSize = 65536;
@@ -244,7 +248,7 @@ class RSMQTest extends \PHPUnit\Framework\TestCase
 
     public function testPopMessage(): void
     {
-        $queue = 'foo';
+        $queue = self::QUEUE_NAME;
         $message = 'bar';
         $this->rsmq->createQueue($queue);
 
@@ -257,7 +261,7 @@ class RSMQTest extends \PHPUnit\Framework\TestCase
 
     public function testPopMessageWhenNoMessageExists(): void
     {
-        $queue = 'foo';
+        $queue = self::QUEUE_NAME;
         $this->rsmq->createQueue($queue);
 
         $received = $this->rsmq->popMessage($queue);
@@ -268,7 +272,7 @@ class RSMQTest extends \PHPUnit\Framework\TestCase
 
     public function testSetQueueAttributes(): void
     {
-        $queue = 'foo';
+        $queue = self::QUEUE_NAME;
         $vt = 100;
         $delay = 10;
         $maxsize = 2048;
@@ -299,10 +303,9 @@ class RSMQTest extends \PHPUnit\Framework\TestCase
     public function tearDown(): void
     {
         try {
-            $this->rsmq->deleteQueue('foo');
-        } catch (Exception $_) {
+            $this->rsmq->deleteQueue(self::QUEUE_NAME);
+        } catch (Exception $ignore) {
 
         }
-
     }
 }

@@ -3,6 +3,10 @@ declare(strict_types=1);
 
 namespace Islambey\RSMQ;
 
+use Islambey\RSMQ\Exception\MessageToLongException;
+use Islambey\RSMQ\Exception\QueueAlreadyExistsException;
+use Islambey\RSMQ\Exception\QueueNotFoundException;
+use Islambey\RSMQ\Exception\QueueParametersValidationException;
 use Redis;
 use RedisCluster;
 
@@ -26,11 +30,6 @@ class RSMQ
      * @var bool
      */
     private $realtime;
-
-    /**
-     * @var Util
-     */
-    private $util;
 
     /**
      * @var string
@@ -57,8 +56,6 @@ class RSMQ
         $this->redis = $redis;
         $this->ns = $this->redis instanceof RedisCluster ? sprintf("{%s}:", $ns) : "$ns:";
         $this->realtime = $realtime;
-
-        $this->util = new Util();
 
         $this->initScripts();
     }
@@ -89,7 +86,7 @@ class RSMQ
         $resp = $transaction->exec();
 
         if (!$resp[0]) {
-            throw new Exception('Queue already exists.');
+            throw new QueueAlreadyExistsException($name);
         }
 
         return (bool)$this->redis->sAdd("{$this->ns}QUEUES", $name);
@@ -112,11 +109,11 @@ class RSMQ
         $key = "{$this->ns}$name";
         $transaction = $this->redis->multi();
         $transaction->del("$key:Q", $key);
-        $transaction->srem("{$this->ns}QUEUES", $name);
+        $transaction->sRem("{$this->ns}QUEUES", $name);
         $resp = $transaction->exec();
 
         if (!$resp[0]) {
-            throw new Exception('Queue not found.');
+            throw new QueueNotFoundException($name);
         }
     }
 
@@ -147,7 +144,7 @@ class RSMQ
         $resp = $transaction->exec();
 
         if ($resp[0]['vt'] === false) {
-            throw new Exception('Queue not found.');
+            throw new QueueNotFoundException($queue);
         }
 
         $attributes = [
@@ -211,31 +208,31 @@ class RSMQ
     }
 
     /**
-     * @param string $queue
+     * @param string $queueName
      * @param string $message
      * @param array<string, mixed> $options
      * @return string
      * @throws Exception
      */
-    public function sendMessage(string $queue, string $message, array $options = []): string
+    public function sendMessage(string $queueName, string $message, array $options = []): string
     {
         $this->validate([
-            'queue' => $queue,
+            'queue' => $queueName,
         ]);
 
-        $q = $this->getQueue($queue, true);
-        $delay = $options['delay'] ?? $q['delay'];
+        $queue = $this->getQueue($queueName, true);
+        $delay = $options['delay'] ?? $queue['delay'];
 
-        if ($q['maxsize'] !== -1 && mb_strlen($message) > $q['maxsize']) {
-            throw new Exception('Message too long');
+        if ($queue['maxsize'] !== -1 && mb_strlen($message) > $queue['maxsize']) {
+            throw new MessageToLongException();
         }
 
-        $key = "{$this->ns}$queue";
+        $key = "{$this->ns}$queueName";
 
         $transaction = $this->redis->multi();
-        $transaction->zadd($key, $q['ts'] + $delay * 1000, $q['uid']);
-        $transaction->hset("$key:Q", $q['uid'], $message);
-        $transaction->hincrby("$key:Q", 'totalsent', 1);
+        $transaction->zAdd($key, $queue['ts'] + $delay * 1000, $queue['uid']);
+        $transaction->hSet("$key:Q", $queue['uid'], $message);
+        $transaction->hIncrBy("$key:Q", 'totalsent', 1);
 
         if ($this->realtime) {
             $transaction->zCard($key);
@@ -244,10 +241,10 @@ class RSMQ
         $resp = $transaction->exec();
 
         if ($this->realtime) {
-            $this->redis->publish("{$this->ns}rt:$$queue", $resp[3]);
+            $this->redis->publish("{$this->ns}rt:$$queueName", $resp[3]);
         }
 
-        return $q['uid'];
+        return $queue['uid'];
     }
 
     /**
@@ -351,11 +348,11 @@ class RSMQ
 
     /**
      * @param string $name
-     * @param bool $uid
+     * @param bool $generateUid
      * @return array<string, mixed>
      * @throws Exception
      */
-    private function getQueue(string $name, bool $uid = false): array
+    private function getQueue(string $name, bool $generateUid = false): array
     {
         $this->validate([
             'queue' => $name,
@@ -368,15 +365,15 @@ class RSMQ
             $time = $this->redis->time();
         }
         $transaction = $this->redis->multi();
-        $transaction->hmget("{$this->ns}$name:Q", ['vt', 'delay', 'maxsize']);
+        $transaction->hMGet("{$this->ns}$name:Q", ['vt', 'delay', 'maxsize']);
 
         $resp = $transaction->exec();
 
         if ($resp[0]['vt'] === false) {
-            throw new Exception('Queue not found.');
+            throw new QueueNotFoundException($name);
         }
 
-        $ms = $this->util->formatZeroPad((int)$time[1], 6);
+        $ms = Util::formatZeroPad((int)$time[1], 6);
 
 
         $queue = [
@@ -386,9 +383,8 @@ class RSMQ
             'ts' => (int)($time[0] . substr($ms, 0, 3)),
         ];
 
-        if ($uid) {
-            $uid = $this->util->makeID(22);
-            $queue['uid'] = base_convert(($time[0] . $ms), 10, 36) . $uid;
+        if ($generateUid) {
+            $queue['uid'] = base_convert(($time[0] . $ms), 10, 36) . Util::makeID(22);
         }
 
         return $queue;
@@ -455,30 +451,35 @@ class RSMQ
 
     /**
      * @param array<string, mixed> $params
-     * @throws Exception
+     * @throws QueueParametersValidationException
      */
     public function validate(array $params): void
     {
         if (isset($params['queue']) && !preg_match('/^([a-zA-Z0-9_-]){1,160}$/', $params['queue'])) {
-            throw new Exception('Invalid queue name');
+            throw new QueueParametersValidationException('Invalid queue name');
         }
 
         if (isset($params['id']) && !preg_match('/^([a-zA-Z0-9:]){32}$/', $params['id'])) {
-            throw new Exception('Invalid message id');
+            throw new QueueParametersValidationException('Invalid message id');
         }
 
         if (isset($params['vt']) && ($params['vt'] < 0 || $params['vt'] > self::MAX_DELAY)) {
-            throw new Exception('Visibility time must be between 0 and ' . self::MAX_DELAY);
+            throw new QueueParametersValidationException('Visibility time must be between 0 and ' . self::MAX_DELAY);
         }
 
         if (isset($params['delay']) && ($params['delay'] < 0 || $params['delay'] > self::MAX_DELAY)) {
-            throw new Exception('Delay must be between 0 and ' . self::MAX_DELAY);
+            throw new QueueParametersValidationException('Delay must be between 0 and ' . self::MAX_DELAY);
         }
 
         if (isset($params['maxsize']) &&
             ($params['maxsize'] < self::MIN_MESSAGE_SIZE || $params['maxsize'] > self::MAX_PAYLOAD_SIZE)) {
-            $message = "Maximum message size must be between %d and %d";
-            throw new Exception(sprintf($message, self::MIN_MESSAGE_SIZE, self::MAX_PAYLOAD_SIZE));
+            throw new QueueParametersValidationException(
+                sprintf(
+                    "Maximum message size must be between %d and %d",
+                    self::MIN_MESSAGE_SIZE,
+                    self::MAX_PAYLOAD_SIZE
+                )
+            );
         }
     }
 }
