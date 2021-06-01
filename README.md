@@ -313,5 +313,10 @@ if($rsmq->changeMessageVisibility($queue, $id, 60)) {
 }
 ```
 
+## Rights
+
+To let everything work flawless the user needs the following rights:
+`+cluster|slots +@transaction +time +del +echo +script|load +evalsha +smembers +sadd +srem +zadd +zcard +zcount +zrem +zrangebyscore +zscore +hset +hget +hmget +hsetnx +hincrby +hdel +set +get +publish`
+
 ## LICENSE
 The MIT LICENSE. See [LICENSE](./LICENSE)
