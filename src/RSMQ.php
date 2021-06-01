@@ -48,13 +48,13 @@ class RSMQ
 
     /**
      * @param Redis|RedisCluster $redis    When minimum is PHP8, write the union type in the constructor.
-     * @param string             $ns       Hash tags will be added automatically for RedisCluster.
+     * @param string             $ns       Hash tags are strongly recommended for RedisCluster, e.g. '{test}'.
      * @param bool               $realtime
      */
     public function __construct($redis, string $ns = 'rsmq', bool $realtime = false)
     {
         $this->redis = $redis;
-        $this->ns = $this->redis instanceof RedisCluster ? sprintf("{%s}:", $ns) : "$ns:";
+        $this->ns = "$ns:";
         $this->realtime = $realtime;
 
         $this->initScripts();
